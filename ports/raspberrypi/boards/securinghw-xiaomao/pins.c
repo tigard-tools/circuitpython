@@ -6,6 +6,8 @@
 
 #include "shared-bindings/board/__init__.h"
 
+CIRCUITPY_BOARD_BUS_SINGLETON(uart1, uart, 1)
+
 static const mp_rom_map_elem_t board_module_globals_table[] = {
     CIRCUITPYTHON_BOARD_DICT_STANDARD_ITEMS
 
@@ -31,6 +33,6 @@ static const mp_rom_map_elem_t board_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_NEOPIXEL_POWER), MP_ROM_PTR(&pin_GPIO6) },
 
     { MP_ROM_QSTR(MP_QSTR_UART), MP_ROM_PTR(&board_uart_obj) },
-    { MP_ROM_QSTR(MP_QSTR_UART1), MP_ROM_PTR(&board_uart_obj) },
+    { MP_ROM_QSTR(MP_QSTR_UART1), MP_ROM_PTR(&board_uart1_obj) },
 };
 MP_DEFINE_CONST_DICT(board_module_globals, board_module_globals_table);
