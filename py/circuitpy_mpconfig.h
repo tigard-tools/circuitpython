@@ -78,7 +78,9 @@ extern void common_hal_mcu_enable_interrupts(void);
 #define MICROPY_ENABLE_SELECTIVE_COLLECT (1)
 #define MICROPY_ENABLE_GC                (1)
 #define MICROPY_ENABLE_PYSTACK           (1)
-#define MICROPY_TRACKED_ALLOC            (CIRCUITPY_SSL_MBEDTLS)
+// mbedtls allocates through m_tracked_calloc/m_tracked_free. hashlib-only ports need
+// them too as of mbedtls 4.x: hashlib uses mbedtls_md_*(), which allocates on the heap.
+#define MICROPY_TRACKED_ALLOC            (CIRCUITPY_SSL_MBEDTLS || CIRCUITPY_HASHLIB_MBEDTLS_ONLY)
 #define MICROPY_ENABLE_SOURCE_LINE       (1)
 #define MICROPY_EPOCH_IS_1970            (1)
 #define MICROPY_ERROR_REPORTING          (CIRCUITPY_FULL_BUILD ? MICROPY_ERROR_REPORTING_NORMAL : MICROPY_ERROR_REPORTING_TERSE)
@@ -103,6 +105,7 @@ extern void common_hal_mcu_enable_interrupts(void);
 #define MICROPY_OPT_MPZ_BITWISE          (0)
 #define MICROPY_OPT_CACHE_MAP_LOOKUP_IN_BYTECODE (CIRCUITPY_OPT_CACHE_MAP_LOOKUP_IN_BYTECODE)
 #define MICROPY_PERSISTENT_CODE_LOAD     (1)
+#define MICROPY_PERSISTENT_CODE_LOAD_NATIVE (CIRCUITPY_LOAD_NATIVE || CIRCUITPY_ENABLE_MPY_NATIVE)
 
 #define MICROPY_PY_ARRAY                 (CIRCUITPY_ARRAY)
 #define MICROPY_PY_ARRAY_SLICE_ASSIGN    (1)
@@ -189,6 +192,9 @@ extern void common_hal_mcu_enable_interrupts(void);
 #define FILESYSTEM_BLOCK_SIZE       (512)
 
 #define MICROPY_VFS                 (1)
+// CIRCUITPY-CHANGE: CircuitPython's flash/SD block devices are native
+// (supervisor/shared/flash.c sets MP_BLOCKDEV_FLAG_NATIVE).
+#define MICROPY_VFS_BLOCKDEV_NATIVE (1)
 #define MICROPY_VFS_FAT             (MICROPY_VFS)
 #define MICROPY_READER_VFS          (MICROPY_VFS)
 
@@ -196,7 +202,12 @@ extern void common_hal_mcu_enable_interrupts(void);
 
 #define BYTES_PER_WORD (4)
 
+// Bit 0 of a code pointer selects the Thumb instruction set.
+#if defined(__thumb__)
 #define MICROPY_MAKE_POINTER_CALLABLE(p) ((void *)((mp_uint_t)(p) | 1))
+#else
+#define MICROPY_MAKE_POINTER_CALLABLE(p) ((void *)(p))
+#endif
 
 // Track stack usage. Expose results via ustack module.
 #define MICROPY_MAX_STACK_USAGE       (0)
@@ -260,6 +271,10 @@ typedef long mp_off_t;
 #define MICROPY_PY_COLLECTIONS_DEQUE          (CIRCUITPY_FULL_BUILD)
 #define MICROPY_PY_COLLECTIONS_DEQUE_ITER     (CIRCUITPY_FULL_BUILD)
 #define MICROPY_PY_COLLECTIONS_DEQUE_SUBSCR   (CIRCUITPY_FULL_BUILD)
+#endif
+
+#ifndef MICROPY_PY_DELATTR_SETATTR
+#define MICROPY_PY_DELATTR_SETATTR       (CIRCUITPY_FULL_BUILD)
 #endif
 
 #ifndef MICROPY_PY_DOUBLE_TYPECODE
@@ -524,6 +539,11 @@ void background_callback_run_all(void);
 #ifndef CIRCUITPY_SDCARD_USB
 #if CIRCUITPY_USB_DEVICE
 #define CIRCUITPY_SDCARD_USB (CIRCUITPY_SDCARDIO && CIRCUITPY_USB_MSC)
+// Default value of CIRCUITPY_SDCARD_USB in settings.toml.
+#ifndef CIRCUITPY_SDCARD_USB_DEFAULT
+// True for most boards.
+#define CIRCUITPY_SDCARD_USB_DEFAULT (true)
+#endif
 #else
 #define CIRCUITPY_SDCARD_USB (0)
 #endif

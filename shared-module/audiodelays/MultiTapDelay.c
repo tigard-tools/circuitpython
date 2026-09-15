@@ -118,11 +118,12 @@ void common_hal_audiodelays_multi_tap_delay_set_delay_ms(audiodelays_multi_tap_d
     self->delay_buffer_len = (uint32_t)(self->base.sample_rate / MICROPY_FLOAT_CONST(1000.0) * self->delay_ms) * (self->base.channel_count * sizeof(uint16_t));
 
     // Limit to valid range
-    if (self->delay_buffer_len > self->max_delay_buffer_len) {
-        self->delay_buffer_len = self->max_delay_buffer_len;
-    } else if (self->delay_buffer_len < self->buffer_len) {
+    if (self->delay_buffer_len < self->buffer_len) {
         // If the delay buffer is smaller than our audio buffer, weird things happen
         self->delay_buffer_len = self->buffer_len;
+    }
+    if (self->delay_buffer_len > self->max_delay_buffer_len) {
+        self->delay_buffer_len = self->max_delay_buffer_len;
     }
 
     // Clear the now unused part of the buffer or some weird artifacts appear
@@ -348,9 +349,15 @@ audioio_get_buffer_result_t audiodelays_multi_tap_delay_get_buffer(audiodelays_m
             if (self->sample) {
                 // Load another sample buffer to play
                 audioio_get_buffer_result_t result = audiosample_get_buffer(self->sample, false, 0, (uint8_t **)&self->sample_remaining_buffer, &self->sample_buffer_length);
-                // Track length in terms of words.
-                self->sample_buffer_length /= (self->base.bits_per_sample / 8);
-                self->more_data = result == GET_BUFFER_MORE_DATA;
+                if (result == GET_BUFFER_ERROR) {
+                    self->sample = NULL;
+                    self->sample_buffer_length = 0;
+                    self->more_data = false;
+                } else {
+                    // Track length in terms of words.
+                    self->sample_buffer_length /= (self->base.bits_per_sample / 8);
+                    self->more_data = result == GET_BUFFER_MORE_DATA;
+                }
             }
         }
 

@@ -48,7 +48,7 @@
 //|
 //|         **Limitations:** On SAMD and RP2040, supports only 8 or 16 bit mono input, with 64x oversampling.
 //|         On nRF52840, supports only 16 bit mono input at 16 kHz; oversampling is fixed at 64x. Not provided
-//|         on nRF52833 for space reasons. Not available on Espressif.
+//|         on nRF52833 for space reasons. On Espressif, only available on ESP32, ESP32-S3, and ESP32-P4.
 //|
 //|         For example, to record 8-bit unsigned samples to a buffer::
 //|
@@ -96,15 +96,17 @@ static mp_obj_t audiobusio_pdmin_make_new(const mp_obj_type_t *type, size_t n_ar
     const mcu_pin_obj_t *clock_pin = validate_obj_is_free_pin(args[ARG_clock_pin].u_obj, MP_QSTR_clock_pin);
     const mcu_pin_obj_t *data_pin = validate_obj_is_free_pin(args[ARG_data_pin].u_obj, MP_QSTR_data_pin);
 
-    uint32_t sample_rate = args[ARG_sample_rate].u_int;
-    uint8_t bit_depth = args[ARG_bit_depth].u_int;
-    if (bit_depth % 8 != 0) {
+    uint32_t sample_rate = mp_arg_validate_int_min(args[ARG_sample_rate].u_int, 1, MP_QSTR_sample_rate);
+    mp_int_t requested_bit_depth = args[ARG_bit_depth].u_int;
+    if (requested_bit_depth != 8 && requested_bit_depth != 16) {
         mp_raise_ValueError_varg(MP_ERROR_TEXT("%q must be multiple of 8."), MP_QSTR_bit_depth);
     }
-    uint8_t oversample = args[ARG_oversample].u_int;
-    if (oversample % 8 != 0) {
+    uint8_t bit_depth = requested_bit_depth;
+    mp_int_t requested_oversample = args[ARG_oversample].u_int;
+    if (requested_oversample < 8 || requested_oversample > 255 || requested_oversample % 8 != 0) {
         mp_raise_ValueError_varg(MP_ERROR_TEXT("%q must be multiple of 8."), MP_QSTR_oversample);
     }
+    uint8_t oversample = requested_oversample;
     bool mono = args[ARG_mono].u_bool;
 
     mp_float_t startup_delay = (args[ARG_startup_delay].u_obj == MP_OBJ_NULL)

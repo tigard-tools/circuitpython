@@ -337,13 +337,10 @@ bool supervisor_start_web_workflow(void) {
     }
     #endif
 
-    // Skip starting the workflow if we're not starting from power on or reset.
+    // Skip starting the workflow if the reset reason reflects a problem.
     const mcu_reset_reason_t reset_reason = common_hal_mcu_processor_get_reset_reason();
-    if (reset_reason != RESET_REASON_POWER_ON &&
-        reset_reason != RESET_REASON_RESET_PIN &&
-        reset_reason != RESET_REASON_DEEP_SLEEP_ALARM &&
-        reset_reason != RESET_REASON_UNKNOWN &&
-        reset_reason != RESET_REASON_SOFTWARE) {
+    if (reset_reason == MCU_RESET_REASON_BROWNOUT ||
+        reset_reason == MCU_RESET_REASON_RESCUE_DEBUG) {
         return false;
     }
 
@@ -400,14 +397,33 @@ bool supervisor_start_web_workflow(void) {
 
         if (common_hal_socketpool_socket_get_closed(&listening)) {
             #if CIRCUITPY_SOCKETPOOL_IPV6
-            socketpool_socket(&pool, SOCKETPOOL_AF_INET6, SOCKETPOOL_SOCK_STREAM, 0, &listening);
+            bool opened = socketpool_socket(&pool, SOCKETPOOL_AF_INET6, SOCKETPOOL_SOCK_STREAM, 0, &listening);
             #else
-            socketpool_socket(&pool, SOCKETPOOL_AF_INET, SOCKETPOOL_SOCK_STREAM, 0, &listening);
+            bool opened = socketpool_socket(&pool, SOCKETPOOL_AF_INET, SOCKETPOOL_SOCK_STREAM, 0, &listening);
             #endif
+            // Ports with an offloaded network stack can refuse to create a
+            // socket until the interface has an address (this board returns
+            // ENOTCONN before DHCP completes). Binding and listening on the
+            // unset descriptor then fails with EBADF, and reporting success
+            // leaves the supervisor polling a socket that was never opened.
+            //
+            // Returning false avoids that but is not a retry: the background
+            // callback never re-enters this function, so the next attempt is
+            // the next supervisor_workflow_reset(), i.e. a VM restart. A board
+            // that only gets an address after boot will not bring the workflow
+            // up on its own until then.
+            if (!opened) {
+                return false;
+            }
             common_hal_socketpool_socket_settimeout(&listening, 0);
-            // Bind to any ip. (Not checking for failures)
-            common_hal_socketpool_socket_bind(&listening, "", 0, web_api_port);
-            common_hal_socketpool_socket_listen(&listening, 1);
+            if (common_hal_socketpool_socket_bind(&listening, "", 0, web_api_port) != 0) {
+                common_hal_socketpool_socket_close(&listening);
+                return false;
+            }
+            if (!common_hal_socketpool_socket_listen(&listening, 1)) {
+                common_hal_socketpool_socket_close(&listening);
+                return false;
+            }
         }
         // Wake polling thread (maybe)
         socketpool_socket_poll_resume();
@@ -886,7 +902,6 @@ static void _reply_with_devices_json(socketpool_socket_obj_t *socket, _request *
             "\"instance_name\": \"%s\", "
             "\"port\": %d, "
             "\"ip\": \"%d.%d.%d.%d\"}", hostname, instance_name, port, octets[0], octets[1], octets[2], octets[3]);
-        common_hal_mdns_remoteservice_deinit(&found_devices[i]);
     }
     #endif
     _send_chunk(socket, "]}");
@@ -1040,7 +1055,7 @@ static void _write_file_and_reply(socketpool_socket_obj_t *socket, _request *req
     if (result == FR_NO_FILE) {
         new_file = true;
         result = f_open(fs, &active_file, path, FA_WRITE | FA_OPEN_ALWAYS);
-    } else {
+    } else if (result == FR_OK) {
         old_length = f_size(&active_file);
     }
 
@@ -1049,6 +1064,18 @@ static void _write_file_and_reply(socketpool_socket_obj_t *socket, _request *req
         filesystem_unlock(fs_mount);
         _discard_incoming(socket, request->content_length);
         _reply_missing(socket, request);
+        return;
+    }
+    if (result == FR_WRITE_PROTECTED) {
+        // The filesystem is held by something else with write access (most
+        // commonly USB-MSC: the host has CIRCUITPY mounted, so CircuitPython
+        // can't write through FatFS). Match the mkdir/move/delete paths and
+        // reply 409 Conflict so clients can show an actionable message
+        // ("eject CIRCUITPY / disable USB MSC") instead of a generic 500.
+        override_fattime(0);
+        filesystem_unlock(fs_mount);
+        _discard_incoming(socket, request->content_length);
+        _reply_conflict(socket, request);
         return;
     }
     if (result != FR_OK) {

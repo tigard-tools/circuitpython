@@ -8,25 +8,9 @@
 
 #include "py/obj.h"
 #include "shared-module/audiocore/__init__.h"
+#include "shared-module/audiospeed/__init__.h"
 
-// Fixed-point 16.16 format
-#define SPEED_SHIFT 16
-
-typedef struct {
-    audiosample_base_t base;
-    mp_obj_t source;
-    uint8_t *output_buffer;
-    uint32_t output_buffer_length; // in bytes, allocated size
-    // Source buffer cache
-    uint8_t *src_buffer;
-    uint32_t src_buffer_length; // in bytes
-    uint32_t src_sample_count;  // in frames
-    // Phase accumulator and rate in 16.16 fixed-point (units: source frames)
-    uint32_t phase;
-    uint32_t rate_fp; // 16.16 fixed-point rate
-    bool source_done;  // source returned DONE on last get_buffer
-    bool source_exhausted; // source DONE and we consumed all of it
-} audiospeed_speedchanger_obj_t;
+typedef audiospeed_base_t audiospeed_speedchanger_obj_t;
 
 void audiospeed_speedchanger_reset_buffer(audiospeed_speedchanger_obj_t *self,
     bool single_channel_output, uint8_t channel);

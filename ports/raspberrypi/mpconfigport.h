@@ -8,11 +8,15 @@
 
 #include "hardware/platform_defs.h"
 
-#ifdef PICO_RP2040
+// CIRCUITPY-CHANGE: CircuitPython supports raw sockets through its own lwip
+// integration, independently of MICROPY_PY_LWIP.
+#define MICROPY_PY_LWIP_SOCK_RAW (1)
+
+#if PICO_RP2040
 #define MICROPY_PY_SYS_PLATFORM             "RP2040"
 #endif
 
-#ifdef PICO_RP2350
+#if PICO_RP2350
 #define MICROPY_PY_SYS_PLATFORM             "RP2350"
 
 // PSRAM can require more stack space for GC.
@@ -45,6 +49,16 @@
 
 // This also includes mpconfigboard.h.
 #include "py/circuitpy_mpconfig.h"
+
+// Turn on this option to allow the use of the internal pull-up resistors on
+// the I2C pins, for boards whose on-board I2C peripherals lack external pull
+// up resistors. The internal pull-ups are weak, and using them is only to
+// compensate for design decisions that are out of the control of the authors
+// of CircuitPython. It is not an endorsement of running without appropriate
+// external pull up resistors.
+#ifndef CIRCUITPY_I2C_ALLOW_INTERNAL_PULL_UP
+#define CIRCUITPY_I2C_ALLOW_INTERNAL_PULL_UP (0)
+#endif
 
 #if CIRCUITPY_CYW43
 #define MICROPY_PY_LWIP_ENTER   cyw43_arch_lwip_begin();

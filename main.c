@@ -84,6 +84,10 @@
 #include "shared-module/keypad/__init__.h"
 #endif
 
+#if CIRCUITPY_AUDIOFILEWRITER
+#include "shared-module/audiofilewriter/AudioFileWriter.h"
+#endif
+
 #if CIRCUITPY_MEMORYMONITOR
 #include "shared-module/memorymonitor/__init__.h"
 #endif
@@ -116,12 +120,6 @@ uint8_t value_out = 0;
 #if CIRCUITPY_SETTINGS_TOML
 #include "supervisor/shared/settings.h"
 #endif
-
-static void reset_devices(void) {
-    #if CIRCUITPY_BLEIO_HCI
-    bleio_reset();
-    #endif
-}
 
 static uint8_t *_heap;
 static uint8_t *_pystack;
@@ -269,9 +267,10 @@ void supervisor_execution_status(void) {
     mp_obj_exception_t *exception = MP_OBJ_TO_PTR(_exec_result.exception);
     if (_current_executing_filename != NULL) {
         serial_write(_current_executing_filename);
-    } else if ((_exec_result.return_code & PYEXEC_EXCEPTION) != 0 &&
-               _exec_result.exception_line > 0 &&
-               exception != NULL) {
+    } else if (
+        (_exec_result.return_code == PYEXEC_UNHANDLED_EXCEPTION) &&
+        (_exec_result.exception_line > 0) &&
+        exception != NULL) {
         mp_printf(&mp_plat_print, "%d@%s %q", _exec_result.exception_line, _exec_result.exception_filename, exception->base.type->name);
     } else {
         serial_write_compressed(MP_ERROR_TEXT("Done"));
@@ -337,6 +336,9 @@ static void count_strn(void *data, const char *str, size_t len) {
 }
 
 static void cleanup_after_vm(mp_obj_t exception) {
+    // Do any port cleanup needed before anything else, including releasing board buses.
+    reset_port_early();
+
     // Get the traceback of any exception from this run off the heap.
     // MP_OBJ_SENTINEL means "this run does not contribute to traceback storage, don't touch it"
     // MP_OBJ_NULL (=0) means "this run completed successfully, clear any stored traceback"
@@ -367,9 +369,6 @@ static void cleanup_after_vm(mp_obj_t exception) {
         }
     }
 
-    // Reset port-independent devices, like CIRCUITPY_BLEIO_HCI.
-    reset_devices();
-
     #if CIRCUITPY_ATEXIT
     atexit_reset();
     #endif
@@ -383,7 +382,7 @@ static void cleanup_after_vm(mp_obj_t exception) {
     memorymonitor_reset();
     #endif
 
-    // Disable user related BLE state that uses the micropython heap.
+    // Disable user related BLE state that uses the VM heap. Leave BLE workflow running if it's in use.
     #if CIRCUITPY_BLEIO
     bleio_user_reset();
     #endif
@@ -394,6 +393,10 @@ static void cleanup_after_vm(mp_obj_t exception) {
 
     #if CIRCUITPY_KEYPAD
     keypad_reset();
+    #endif
+
+    #if CIRCUITPY_AUDIOFILEWRITER
+    audiofilewriter_reset();
     #endif
 
     // Close user-initiated sockets.
@@ -441,17 +444,6 @@ static void print_code_py_status_message(safe_mode_t safe_mode) {
 }
 
 static bool __attribute__((noinline)) run_code_py(safe_mode_t safe_mode, bool *simulate_reset) {
-    bool serial_connected_at_start = serial_connected();
-    bool printed_safe_mode_message = false;
-    #if CIRCUITPY_AUTORELOAD_DELAY_MS > 0
-    if (serial_connected_at_start) {
-        serial_write("\r\n");
-        print_code_py_status_message(safe_mode);
-        print_safe_mode_message(safe_mode);
-        printed_safe_mode_message = true;
-    }
-    #endif
-
     bool skip_repl = false;
     bool skip_wait = false;
     bool found_main = false;
@@ -585,7 +577,7 @@ static bool __attribute__((noinline)) run_code_py(safe_mode_t safe_mode, bool *s
         blink_count = 0;
     } else
     #endif
-    if (_exec_result.return_code != PYEXEC_EXCEPTION) {
+    if (_exec_result.return_code != PYEXEC_UNHANDLED_EXCEPTION) {
         if (safe_mode == SAFE_MODE_NONE) {
             color = ALL_DONE;
             blink_count = ALL_DONE_BLINKS;
@@ -651,20 +643,18 @@ static bool __attribute__((noinline)) run_code_py(safe_mode_t safe_mode, bool *s
 
         // If messages haven't been printed yet, print them
         if (!printed_press_any_key && serial_connected() && !autoreload_pending()) {
-            if (!serial_connected_at_start) {
-                print_code_py_status_message(safe_mode);
-            }
-
-            if (!printed_safe_mode_message) {
-                print_safe_mode_message(safe_mode);
-                printed_safe_mode_message = true;
-            }
+            print_code_py_status_message(safe_mode);
+            print_safe_mode_message(safe_mode);
             serial_write("\r\n");
             serial_write_compressed(MP_ERROR_TEXT("Press any key to enter the REPL. Use CTRL-D to reload.\n"));
+            if (safe_mode != SAFE_MODE_NONE) {
+                // Reset the port again in safe mode. It doesn't usually do much but
+                // the Zephyr native_sim tests use it for tracking test completion.
+                reset_port();
+            }
             printed_press_any_key = true;
         }
         if (!serial_connected()) {
-            serial_connected_at_start = false;
             printed_press_any_key = false;
         }
 
@@ -672,7 +662,7 @@ static bool __attribute__((noinline)) run_code_py(safe_mode_t safe_mode, bool *s
         #if CIRCUITPY_ALARM
         if (_exec_result.return_code & PYEXEC_DEEP_SLEEP) {
             const bool awoke_from_true_deep_sleep =
-                common_hal_mcu_processor_get_reset_reason() == RESET_REASON_DEEP_SLEEP_ALARM;
+                common_hal_mcu_processor_get_reset_reason() == MCU_RESET_REASON_DEEP_SLEEP_ALARM;
 
             if (fake_sleeping) {
                 // This waits until a pretend deep sleep alarm occurs. They are set
@@ -782,8 +772,10 @@ static bool __attribute__((noinline)) run_code_py(safe_mode_t safe_mode, bool *s
 
     // Done waiting, start the board back up.
 
-    // We delay resetting BLE until after the wait in case we're transferring
-    // more files over.
+    // Resetting BLE is delayed until here, after the wait, in case files were being
+    // transferred over the BLE workflow during the wait. The reset restarts the BLE
+    // stack, dropping the workflow connection, only if user code created GATT
+    // services; otherwise it is a no-op and the connection continues.
     #if CIRCUITPY_BLEIO
     bleio_reset();
     #endif
@@ -807,6 +799,12 @@ static bool __attribute__((noinline)) run_code_py(safe_mode_t safe_mode, bool *s
         #if CIRCUITPY_DISPLAYIO
         common_hal_displayio_auto_primary_display();
         #endif
+        // Undo any preserve_dios.
+        #if CIRCUITPY_ALARM_PRESERVE_DIOS
+        common_hal_alarm_clear_pin_preservations();
+        #endif
+        // Reset pins, as if there was a hard reset.
+        reset_all_pins();
         // Pretend that the next run is the first run, as if we were reset.
         *simulate_reset = true;
     }
@@ -993,8 +991,9 @@ static int run_repl(safe_mode_t safe_mode) {
     #endif
     cleanup_after_vm(MP_OBJ_SENTINEL);
 
-    // Also reset bleio. The above call omits it in case workflows should continue. In this case,
-    // we're switching straight to another VM so we want to reset.
+    // Also reset bleio, which cleanup_after_vm() above omits so workflows can
+    // continue between VMs. As in run_code_py(), this restarts the BLE stack only if
+    // user code created GATT services.
     #if CIRCUITPY_BLEIO
     bleio_reset();
     #endif
@@ -1040,17 +1039,11 @@ int __attribute__((used)) main(void) {
     serial_early_init();
     mp_hal_stdout_tx_str(line_clear);
 
-    // Wait briefly to give a reset window where we'll enter safe mode after the reset.
-    if (get_safe_mode() == SAFE_MODE_NONE) {
-        set_safe_mode(wait_for_safe_mode_reset());
-    }
-
     stack_init();
 
     #if CIRCUITPY_STATUS_BAR
     supervisor_status_bar_init();
     #endif
-
 
     #if !INTERNAL_FLASH_FILESYSTEM
     // Set up anything that might need to get done before we try to use SPI flash
@@ -1066,6 +1059,13 @@ int __attribute__((used)) main(void) {
     // since we haven't run user code yet.
     if (!filesystem_init(get_safe_mode() == SAFE_MODE_NONE, false)) {
         set_safe_mode(SAFE_MODE_NO_CIRCUITPY);
+    }
+
+    // Wait briefly to give a reset window where we'll enter safe mode after the reset.
+    // Do this after mounting the filesystem because settings.toml can contain
+    // CIRCUITPY_SAFE_MODE_DELAY to change the default delay.
+    if (get_safe_mode() == SAFE_MODE_NONE) {
+        set_safe_mode(wait_for_safe_mode_reset());
     }
 
     #if CIRCUITPY_BLEIO
@@ -1085,8 +1085,6 @@ int __attribute__((used)) main(void) {
 
     // Reset everything and prep MicroPython to run boot.py.
     reset_port();
-    // Port-independent devices, like CIRCUITPY_BLEIO_HCI.
-    reset_devices();
     reset_board();
 
     // displays init after filesystem, since they could share the flash SPI

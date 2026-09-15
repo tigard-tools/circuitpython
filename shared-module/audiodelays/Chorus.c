@@ -130,6 +130,10 @@ void chorus_recalculate_delay(audiodelays_chorus_obj_t *self, mp_float_t f_delay
     // Calculate the current chorus buffer length in bytes
     uint32_t new_chorus_buffer_len = (uint32_t)(self->base.sample_rate / MICROPY_FLOAT_CONST(1000.0) * f_delay_ms) * (self->base.channel_count * sizeof(uint16_t));
 
+    if (new_chorus_buffer_len > self->max_chorus_buffer_len) {
+        new_chorus_buffer_len = self->max_chorus_buffer_len;
+    }
+
     self->chorus_buffer_len = new_chorus_buffer_len;
 
     self->current_delay_ms = f_delay_ms;
@@ -218,9 +222,15 @@ audioio_get_buffer_result_t audiodelays_chorus_get_buffer(audiodelays_chorus_obj
             if (self->sample) {
                 // Load another sample buffer to play
                 audioio_get_buffer_result_t result = audiosample_get_buffer(self->sample, false, 0, (uint8_t **)&self->sample_remaining_buffer, &self->sample_buffer_length);
-                // Track length in terms of words.
-                self->sample_buffer_length /= (self->base.bits_per_sample / 8);
-                self->more_data = result == GET_BUFFER_MORE_DATA;
+                if (result == GET_BUFFER_ERROR) {
+                    self->sample = NULL;
+                    self->sample_buffer_length = 0;
+                    self->more_data = false;
+                } else {
+                    // Track length in terms of words.
+                    self->sample_buffer_length /= (self->base.bits_per_sample / 8);
+                    self->more_data = result == GET_BUFFER_MORE_DATA;
+                }
             }
         }
 

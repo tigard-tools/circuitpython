@@ -25,7 +25,10 @@
 //|     with ``storage.VfsFat`` to allow file I/O to an SD card."""
 //|
 //|     def __init__(
-//|         self, bus: busio.SPI, cs: microcontroller.Pin, baudrate: int = 8000000
+//|         self,
+//|         bus: busio.SPI,
+//|         cs: Union[microcontroller.Pin, digitalio.DigitalInOutProtocol],
+//|         baudrate: int = 8000000
 //|     ) -> None:
 //|         """Construct an SPI SD Card object with the given properties
 //|
@@ -38,17 +41,18 @@
 //|         the microcontroller)
 //|
 //|         .. important::
-//|            If the same SPI bus is shared with other peripherals, it is important that
-//|            the SD card be initialized before accessing any other peripheral on the bus.
-//|            Failure to do so can prevent the SD card from being recognized until it is
-//|            powered off or re-inserted.
-//|
-//|            Exception: on boards where another SPI peripheral has a floating CS
-//|            pin with no hardware pull-up (such as the Feather RP2040 RFM), that
-//|            peripheral's CS must be driven HIGH before SD card initialization.
-//|            Failure to do so will corrupt the SPI bus during SD card init. In
-//|            these cases, initialize and drive the other peripheral's CS high
-//|            first, then initialize the SD card.
+//|            When the SPI bus is shared with other peripherals, every CS pin on
+//|            the bus must be in a known HIGH (deselected) state before any SPI
+//|            transaction occurs. This is normally guaranteed by a hardware
+//|            pull-up on each CS line, but on boards where a co-resident
+//|            peripheral's CS floats (for example the Feather RP2040 RFM, whose
+//|            ``RFM_CS`` has no pull-up), that CS must be driven HIGH in
+//|            software before the SD card is initialized. If any CS is allowed
+//|            to float low, the SPI bus can be corrupted during SD card init
+//|            and the card may not be recognized until it is powered off or
+//|            re-inserted. The order in which peripherals are constructed is
+//|            secondary; what matters is that all CS lines are HIGH (deselected)
+//|            before any SPI transaction.
 //|
 //|         Example usage:
 //|
@@ -86,10 +90,9 @@ static mp_obj_t sdcardio_sdcard_make_new(const mp_obj_type_t *type, size_t n_arg
     mp_arg_parse_all_kw_array(n_args, n_kw, all_args, MP_ARRAY_SIZE(allowed_args), allowed_args, args);
 
     busio_spi_obj_t *spi = validate_obj_is_spi_bus(args[ARG_spi].u_obj, MP_QSTR_spi);
-    const mcu_pin_obj_t *cs = validate_obj_is_free_pin(args[ARG_cs].u_obj, MP_QSTR_cs);
 
     sdcardio_sdcard_obj_t *self = mp_obj_malloc_with_finaliser(sdcardio_sdcard_obj_t, &sdcardio_SDCard_type);
-    common_hal_sdcardio_sdcard_construct(self, spi, cs, args[ARG_baudrate].u_int);
+    common_hal_sdcardio_sdcard_construct(self, spi, args[ARG_cs].u_obj, args[ARG_baudrate].u_int);
 
     return MP_OBJ_FROM_PTR(self);
 }

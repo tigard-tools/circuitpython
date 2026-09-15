@@ -1,8 +1,5 @@
 # Enable/disable modules and 3rd-party libs to be included in interpreter
 
-# Build 32-bit binaries on a 64-bit host
-MICROPY_FORCE_32BIT = 0
-
 # This variable can take the following values:
 #  0 - no readline, just simple stdin input
 #  1 - use MicroPython version of readline
@@ -55,5 +52,4 @@ MICROPY_VFS_LFS2 = 0
 # CIRCUITPY-CHANGE
 CIRCUITPY_ULAB = 1
 CIRCUITPY_MESSAGE_COMPRESSION_LEVEL = 1
-MICROPY_EMIT_NATIVE = 0
 CFLAGS += -DCIRCUITPY=1

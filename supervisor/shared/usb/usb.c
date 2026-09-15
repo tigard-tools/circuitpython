@@ -39,6 +39,10 @@
 #include "shared-module/usb_video/__init__.h"
 #endif
 
+#if CIRCUITPY_USB_AUDIO
+#include "shared-module/usb_audio/__init__.h"
+#endif
+
 #endif
 
 #include "tusb.h"
@@ -174,10 +178,16 @@ void usb_background(void) {
         #if CIRCUITPY_USB_DEVICE && CIRCUITPY_USB_VIDEO
         usb_video_task();
         #endif
+        #if CIRCUITPY_USB_DEVICE && CIRCUITPY_USB_AUDIO
+        usb_audio_task();
+        #endif
     }
 }
 
-uint32_t tusb_time_millis_api(void) {
+// Ports may override this with a RAM-resident version when TinyUSB code that
+// calls it must not execute from flash (e.g. raspberrypi polls
+// tuh_task_event_ready(), which calls this, from core1).
+MP_WEAK uint32_t tusb_time_millis_api(void) {
     return supervisor_ticks_ms32();
 }
 

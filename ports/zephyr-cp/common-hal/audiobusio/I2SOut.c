@@ -45,7 +45,11 @@ mp_obj_t common_hal_audiobusio_i2sout_construct_from_device(audiobusio_i2sout_ob
 // Standard audiobusio construct - not used in Zephyr port (devices come from device tree)
 void common_hal_audiobusio_i2sout_construct(audiobusio_i2sout_obj_t *self,
     const mcu_pin_obj_t *bit_clock, const mcu_pin_obj_t *word_select,
-    const mcu_pin_obj_t *data, const mcu_pin_obj_t *main_clock, bool left_justified) {
+    const mcu_pin_obj_t *data, const mcu_pin_obj_t *main_clock, bool left_justified,
+    bool external_clock) {
+    if (external_clock) {
+        mp_raise_NotImplementedError_varg(MP_ERROR_TEXT("%q"), MP_QSTR_external_clock);
+    }
     mp_raise_NotImplementedError_varg(MP_ERROR_TEXT("Use device tree to define %q devices"), MP_QSTR_I2S);
 }
 
@@ -87,20 +91,10 @@ static void fill_buffer(audiobusio_i2sout_obj_t *self, uint8_t *buffer, size_t b
             return;
         }
 
-        if (result == GET_BUFFER_DONE) {
-            if (self->loop) {
-                // Reset to beginning
-                audiosample_reset_buffer(self->sample, false, 0);
-            } else {
-                // Done playing, fill rest with silence
-                self->stopping = true;
-                i2s_trigger(self->i2s_dev, I2S_DIR_TX, I2S_TRIGGER_DRAIN);
-                memset(buffer + bytes_filled, 0, buffer_size - bytes_filled);
-                return;
-            }
-        }
-
-        // Copy data to buffer
+        // Copy the returned data first, even when this is the final buffer
+        // (GET_BUFFER_DONE). A single-buffer sample returns its entire buffer
+        // together with GET_BUFFER_DONE on the first call, so handling DONE
+        // before the copy would drop the audio and produce silence.
         uint32_t bytes_to_copy = sample_buffer_length;
         if (bytes_filled + bytes_to_copy > buffer_size) {
             bytes_to_copy = buffer_size - bytes_filled;
@@ -108,6 +102,19 @@ static void fill_buffer(audiobusio_i2sout_obj_t *self, uint8_t *buffer, size_t b
 
         memcpy(buffer + bytes_filled, sample_buffer, bytes_to_copy);
         bytes_filled += bytes_to_copy;
+
+        if (result == GET_BUFFER_DONE) {
+            if (self->loop) {
+                // Reset to beginning
+                audiosample_reset_buffer(self->sample, false, 0);
+            } else {
+                // Final buffer copied; stop once this block drains.
+                self->stopping = true;
+                i2s_trigger(self->i2s_dev, I2S_DIR_TX, I2S_TRIGGER_DRAIN);
+                memset(buffer + bytes_filled, 0, buffer_size - bytes_filled);
+                return;
+            }
+        }
     }
 }
 
@@ -145,6 +152,8 @@ void common_hal_audiobusio_i2sout_play(audiobusio_i2sout_obj_t *self,
     if (self->playing) {
         common_hal_audiobusio_i2sout_stop(self);
     }
+
+    audiosample_check(sample);
 
     // Get sample information
     uint8_t bits_per_sample = audiosample_get_bits_per_sample(sample);

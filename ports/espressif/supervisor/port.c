@@ -16,6 +16,7 @@
 #include "py/mpprint.h"
 #include "py/runtime.h"
 
+#include "esp_mac.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -52,7 +53,7 @@
 #endif
 
 #if CIRCUITPY_ESPCAMERA
-#include "esp_camera.h"
+#include "common-hal/espcamera/Camera.h"
 #endif
 
 #if CIRCUITPY_RCLCPY
@@ -346,11 +347,17 @@ size_t port_heap_get_largest_free_size(void) {
     return free_size;
 }
 
-void reset_port(void) {
-    // TODO deinit for esp32-camera
+void reset_port_early(void) {
+    // esp-camera adds an I2C device on the ESP I2C bus, and keeps it there. This
+    // is unlike busio.I2C, which adds and removes the device on each operation.
+    // So have the esp-camera API shut down the camera now, before reset_board_buses() tries to delete the I2C bus.
+    // Unfortunately, there is no I2C driver API to enumerate or delete all the devices.
     #if CIRCUITPY_ESPCAMERA
-    esp_camera_deinit();
+    espcamera_reset();
     #endif
+}
+
+void reset_port(void) {
 
     #if CIRCUITPY_SSL
     ssl_reset();
@@ -515,7 +522,12 @@ void port_idle_until_interrupt(void) {
 #if CIRCUITPY_WIFI
 void port_boot_info(void) {
     uint8_t mac[6];
-    esp_wifi_get_mac(ESP_IF_WIFI_STA, mac);
+    // This runs before esp_wifi_init(), so esp_wifi_get_mac() fails with
+    // ESP_ERR_WIFI_NOT_INIT and leaves mac[] untouched. esp_read_mac() reads
+    // efuse directly and does not need the WiFi driver started.
+    if (esp_read_mac(mac, ESP_MAC_WIFI_STA) != ESP_OK) {
+        return;
+    }
     mp_printf(&mp_plat_print, "MAC");
     for (int i = 0; i < 6; i++) {
         mp_printf(&mp_plat_print, ":%02X", mac[i]);

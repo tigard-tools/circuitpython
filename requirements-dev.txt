@@ -3,6 +3,9 @@ cascadetoml
 jinja2
 typer
 
+# for generating mbedtls's PSA driver wrappers (jinja2, above, is also required)
+jsonschema
+
 sh
 click<8.2.0
 cpp-coveralls
@@ -24,6 +27,7 @@ intelhex
 
 # for building & testing natmods
 pyelftools
+ar
 
 cryptography
 

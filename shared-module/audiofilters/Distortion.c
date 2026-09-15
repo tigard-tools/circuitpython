@@ -192,9 +192,15 @@ audioio_get_buffer_result_t audiofilters_distortion_get_buffer(audiofilters_dist
             if (self->sample) {
                 // Load another sample buffer to play
                 audioio_get_buffer_result_t result = audiosample_get_buffer(self->sample, false, 0, (uint8_t **)&self->sample_remaining_buffer, &self->sample_buffer_length);
-                // Track length in terms of words.
-                self->sample_buffer_length /= (self->base.bits_per_sample / 8);
-                self->more_data = result == GET_BUFFER_MORE_DATA;
+                if (result == GET_BUFFER_ERROR) {
+                    self->sample = NULL;
+                    self->sample_buffer_length = 0;
+                    self->more_data = false;
+                } else {
+                    // Track length in terms of words.
+                    self->sample_buffer_length /= (self->base.bits_per_sample / 8);
+                    self->more_data = result == GET_BUFFER_MORE_DATA;
+                }
             }
         }
 
@@ -204,7 +210,9 @@ audioio_get_buffer_result_t audiofilters_distortion_get_buffer(audiofilters_dist
             } else {
                 // For unsigned samples set to the middle which is "quiet"
                 if (MP_LIKELY(self->base.bits_per_sample == 16)) {
-                    memset(word_buffer, 32768, length * (self->base.bits_per_sample / 8));
+                    for (uint32_t si = 0; si < length; si++) {
+                        word_buffer[si] = (int16_t)0x8000;
+                    }
                 } else {
                     memset(hword_buffer, 128, length * (self->base.bits_per_sample / 8));
                 }
@@ -319,7 +327,7 @@ audioio_get_buffer_result_t audiofilters_distortion_get_buffer(audiofilters_dist
 
                     // Hard clip
                     if (!self->soft_clip) {
-                        word = MIN(MAX(word, -32767), 32768);
+                        word = MIN(MAX(word, -32767), 32767);
                     }
 
                     if (MP_LIKELY(self->base.bits_per_sample == 16)) {

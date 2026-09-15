@@ -6,6 +6,7 @@
 
 #include "supervisor/board.h"
 #include "mpconfigboard.h"
+#include "driver/gpio.h"
 #include "shared-bindings/busio/SPI.h"
 #include "shared-bindings/fourwire/FourWire.h"
 #include "shared-module/displayio/__init__.h"
@@ -52,8 +53,8 @@ void board_init(void) {
     common_hal_fourwire_fourwire_construct(bus,
         spi,
         MP_OBJ_FROM_PTR(&pin_GPIO21), // TFT_DC Command or data
-        MP_OBJ_FROM_PTR(&pin_GPIO5), // TFT_CS Chip select
-        NULL, // TFT_RST Reset
+        MP_OBJ_FROM_PTR(&pin_GPIO5),  // TFT_CS Chip select
+        mp_const_none,                // TFT_RST Reset
         40000000, // Baudrate
         0, // Polarity
         0); // Phase
